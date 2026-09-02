@@ -32,7 +32,7 @@ Paths in the lab sheets are relative to the course root, `DataEng_Course/`. Ever
 ```
 DataEng_Course/
 └── Day1/
-    ├── day1-labs/            these lab sheets (instructor/ is the instructor copy)
+    ├── lab-instructions/     these lab sheets (instructor/ is the instructor copy)
     └── labs/                 ← run docker compose from here
         ├── docker-compose.yml
         ├── data/             fetch.sh, taxi Parquet, zone lookup   → /data

@@ -25,7 +25,7 @@ people on hotel wifi need the warning.
 
 ## Send before the day
 
-1. The `Day1/labs/` and `Day1/day1-labs/` folders (minus `instructor/`), or the repo URL
+1. The `Day1/labs/` and `Day1/lab-instructions/` folders (minus `instructor/`), or the repo URL
 2. `lab-0-setup.md`
 3. One line: "from `DataEng_Course/Day1/labs`, run `./data/fetch.sh` then
    `docker compose up -d` before you arrive — it pulls about 4 GB of images"

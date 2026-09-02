@@ -32,7 +32,7 @@ volume mounts from there.
 ```
 DataEng_Course/
 └── Day1/
-    ├── day1-labs/            the lab sheets you are reading
+    ├── lab-instructions/     the lab sheets you are reading
     │   └── instructor/       instructor copy — not in the learner bundle
     └── labs/                 ← run docker compose from here
         ├── docker-compose.yml
