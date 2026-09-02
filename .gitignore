@@ -216,3 +216,24 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# Advanced Data Engineering course
+# ---------------------------------------------------------------------------
+
+# Local Claude Code config and the slide decks are kept out of this repo.
+.claude/
+Slides/
+
+# macOS
+.DS_Store
+
+# Datasets. Day1/labs/data/fetch.sh downloads all five files (~55 MB) and lab 0
+# has learners run it, so they are deliberately not committed. fetch.sh itself IS
+# tracked - it is the thing that recreates these.
+Day1/labs/data/yellow_tripdata_2024-01.parquet
+Day1/labs/data/taxi_zone_lookup.csv
+Day1/labs/import/*.dat
+
+# marimo per-session UI state, written when a notebook is opened.
+__marimo__/

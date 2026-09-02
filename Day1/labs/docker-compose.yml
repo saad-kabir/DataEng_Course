@@ -1,0 +1,256 @@
+# Advanced Data Engineering - week-long lab stack
+# Day 1 uses: postgres, pg_replica, minio, trino, neo4j, marimo (PySpark runs local[*] in marimo)
+# Later days uncomment: kafka, schema-registry, flink, airflow
+name: adetc
+
+services:
+  postgres:
+    image: imresamu/postgis:18-3.6
+    command: >
+      postgres -c wal_level=replica -c max_wal_senders=4
+               -c max_replication_slots=4 -c hot_standby=on
+    environment:
+      POSTGRES_USER: de
+      POSTGRES_PASSWORD: de
+      POSTGRES_DB: rides
+    ports: ["5432:5432"]
+    volumes:
+      - ./seed:/docker-entrypoint-initdb.d
+      - ./data:/data
+      # PG18+ images REFUSE to start if anything exists at /var/lib/postgresql/data.
+      # The mount goes one level up; the server then lives in $PGDATA,
+      # /var/lib/postgresql/18/docker. See docker-library/postgres#1259.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U de -d rides"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # Lab 1.1 only. Built from the primary with pg_basebackup on first start.
+  pg_replica:
+    image: imresamu/postgis:18-3.6
+    profiles: ["replica"]
+    user: postgres
+    depends_on: [postgres]
+    environment:
+      PGPASSWORD: de
+    ports: ["5433:5432"]
+    volumes:
+      - pgreplica:/var/lib/postgresql
+    # -S replica1 adopts the physical slot created by seed/02_replication_slot.sql.
+    # Without a slot the standby streams anyway, but pg_replication_slots stays
+    # empty and lab 1.1 step 5 has no WAL retention to measure.
+    # $$PGDATA (escaped so compose passes it through) is /var/lib/postgresql/18/docker
+    # on PG18+. Hardcoding the old /var/lib/postgresql/data path here makes the
+    # basebackup land somewhere postgres will not read.
+    entrypoint: >
+      bash -c "
+      if [ ! -s \"$$PGDATA/PG_VERSION\" ]; then
+        until pg_isready -h postgres -U de; do sleep 2; done;
+        mkdir -p \"$$PGDATA\";
+        rm -rf \"$$PGDATA\"/*;
+        pg_basebackup -h postgres -U de -D \"$$PGDATA\" -Fp -Xs -R -P -S replica1;
+        chmod 700 \"$$PGDATA\";
+      fi;
+      exec postgres"
+    # start_period covers the first-run pg_basebackup, which copies the whole
+    # primary before postgres is even launched. A standby answers pg_isready once
+    # it accepts read-only connections.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U de -d rides"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+    ports: ["9000:9000", "9001:9001"]
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # One-shot: creates the lake bucket the labs write to. MinIO starts with no
+  # buckets, so without this every s3a write fails with
+  #   NoSuchBucket: The specified bucket does not exist (404)
+  # Reuses the minio image because it already ships mc - no extra pull.
+  # Exits 0 once the bucket exists; `docker compose ps` showing it Exited is normal.
+  minio-init:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+      mc alias set lake http://minio:9000 admin password &&
+      mc mb --ignore-existing lake/rides-lake &&
+      mc ls lake
+      "
+    restart: "no"
+
+  trino:
+    image: trinodb/trino:483
+    depends_on: [minio]
+    ports: ["8080:8080"]
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog
+      # Mounted at /data/trino, NOT /opt/metastore. Trino runs as uid 1000, and
+      # Docker creates a missing mount point root-owned - the file metastore then
+      # cannot write .<schema>.trinoSchema and every CREATE SCHEMA fails with
+      #   Could not read database schema from file:///opt/metastore/...
+      # /data/trino already exists in the image owned by trino:trino, so an empty
+      # named volume mounted there inherits that ownership. The catalog dir is the
+      # `metastore` subdirectory (see trino/catalog/hive.properties).
+      - trinometastore:/data/trino
+    healthcheck:
+      test: ["CMD", "/usr/lib/trino/bin/health-check"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  neo4j:
+    image: neo4j:2026.07.1
+    environment:
+      NEO4J_AUTH: neo4j/password
+      NEO4J_PLUGINS: '["apoc","graph-data-science"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*,gds.*
+      NEO4J_apoc_import_file_enabled: "true"
+    ports: ["7474:7474", "7687:7687"]
+    volumes:
+      - ./import:/var/lib/neo4j/import
+      - neo4jdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p password 'RETURN 1' >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 40s
+
+  # Notebook surface for the whole week. marimo, run under uv.
+  marimo:
+    build: ./marimo
+    ports: ["8888:8888"]
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      NEO4J_URI: bolt://neo4j:7687
+      PGHOST: postgres
+    volumes:
+      - ./work:/work
+      - ./data:/data
+    working_dir: /work
+    # --project /opt/app because ./work is mounted over /work (see marimo/Dockerfile).
+    command: >
+      uv run --project /opt/app --frozen --no-dev
+        marimo edit --headless --host 0.0.0.0 --port 8888 --no-token
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8888/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Standalone Spark cluster for the later days. Behind the `spark` profile so
+  # Day 1 stays lean: lab 2.2 runs PySpark local[*] inside marimo, no cluster.
+  #   docker compose --profile spark up -d
+  # Image is apache/spark (official). 4.1.3 is pinned to match pyspark==4.1.3 in
+  # the marimo image - a driver/cluster version mismatch fails at handshake.
+  spark-master:
+    image: apache/spark:4.1.3
+    profiles: ["spark"]
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+        --host spark-master --port 7077 --webui-port 8080
+    ports: ["7077:7077", "8090:8080"]
+    volumes:
+      - ./work:/work
+      - ./data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # A master alone executes nothing - the worker is what holds the cores.
+  # Mounts match marimo's paths so driver and executors resolve /data identically.
+  spark-worker:
+    image: apache/spark:4.1.3
+    profiles: ["spark"]
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+        spark://spark-master:7077 --webui-port 8081
+    environment:
+      SPARK_WORKER_CORES: "2"
+      SPARK_WORKER_MEMORY: 2g
+    ports: ["8091:8081"]
+    volumes:
+      - ./work:/work
+      - ./data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # --- Day 2 onwards ---------------------------------------------------------
+  # A SKETCH, not a working config. These services are not wired up yet: uncomment
+  # and finish them behind a `day2` profile when the Day 2 labs are written, then
+  # update CLAUDE.md and lab-0-setup.md, both of which currently say they are absent.
+  #
+  # Tags below were checked for a native linux/arm64 build (see the arm64 note in
+  # CLAUDE.md - the room is on Apple Silicon). Bitnami is deliberately NOT used here:
+  # those images were retired from Docker Hub. Kafka runs KRaft, so no ZooKeeper.
+  #
+  # kafka:
+  #   image: apache/kafka:4.3.1
+  #   profiles: ["day2"]
+  #   environment:
+  #     KAFKA_NODE_ID: 1
+  #     KAFKA_PROCESS_ROLES: broker,controller
+  #     KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+  #     KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+  #     KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  #   ports: ["9092:9092"]
+  #
+  # schema-registry:
+  #   image: confluentinc/cp-schema-registry:8.0.7
+  #   profiles: ["day2"]
+  #   environment:
+  #     SCHEMA_REGISTRY_HOST_NAME: schema-registry
+  #     SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
+  #   ports: ["8081:8081"]     # NOTE: clashes with nothing today, but check first
+  #
+  # flink-jobmanager:
+  #   image: apache/flink:2.3.0
+  #   profiles: ["day2"]
+  #   command: jobmanager
+  #   ports: ["8082:8081"]
+  #
+  # airflow:                   # Day 3, not Day 2
+  #   image: apache/airflow:3.3.1
+  #   profiles: ["day3"]
+  #   command: standalone
+  #   ports: ["8083:8080"]
+
+volumes:
+  pgdata:
+  pgreplica:
+  miniodata:
+  neo4jdata:
+  trinometastore:
