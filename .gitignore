@@ -242,5 +242,9 @@ Day1/labs/import/*.dat
 Day1/labs/data/trip_events.jsonl
 Day1/labs/data/late_event.jsonl
 
+# Docker creates this empty mountpoint when it binds Day2/labs/work over
+# /work/day2. Nothing is ever written into it on the host.
+Day1/labs/work/day2/
+
 # marimo per-session UI state, written when a notebook is opened.
 __marimo__/

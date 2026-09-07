@@ -40,7 +40,7 @@ def _(mo):
 def _():
     import sys, time
 
-    sys.path.insert(0, "/work")
+    sys.path.insert(0, "/work/day2")
     from day2_common import spark_session, trips, drivers
     from pyspark.sql import functions as F
 

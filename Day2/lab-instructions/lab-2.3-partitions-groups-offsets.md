@@ -43,7 +43,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
 Build the event stream - one hour of real January 2024 trips, keyed by `trip_id`:
 
 ```bash
-docker compose exec marimo uv run python /work/day2_make_events.py
+docker compose exec marimo uv run python /work/day2/day2_make_events.py
 ```
 
 ```

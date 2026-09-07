@@ -1,6 +1,6 @@
 -- Lab 2.5 - generate the pickup points the spatial join runs against.
 -- Run with:
---   docker compose exec -T postgres psql -U de -d rides -f /work/day2_spatial_setup.sql
+--   docker compose exec -T postgres psql -U de -d rides -f /work/day2/day2_spatial_setup.sql
 --
 -- WHY THE POINTS ARE GENERATED RATHER THAN LOADED
 --
