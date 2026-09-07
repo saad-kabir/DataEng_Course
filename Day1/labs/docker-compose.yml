@@ -3,6 +3,32 @@
 # Later days uncomment: kafka, schema-registry, flink, airflow
 name: adetc
 
+# Shared definition for the two Flink TaskManagers (see flink-taskmanager-1/-2).
+x-flink-taskmanager: &flink-tm
+  build: ./flink
+  command: taskmanager
+  depends_on:
+    flink-jobmanager:
+      condition: service_healthy
+  environment:
+    FLINK_PROPERTIES: |
+      jobmanager.rpc.address: flink-jobmanager
+      taskmanager.numberOfTaskSlots: 2
+      taskmanager.memory.process.size: 1400m
+  volumes:
+    - ./work:/work
+    - ./data:/data
+  # A TaskManager exposes no REST endpoint, so readiness is taken from its own log:
+  # the line it writes once it has registered with the JobManager and its slots are
+  # actually offered. Checking the JobManager instead would report the cluster's
+  # health, not this container's, and would pass even with this TaskManager dead.
+  healthcheck:
+    test: ["CMD-SHELL", "grep -q 'Successful registration at resource manager' /opt/flink/log/*taskexecutor*.log || exit 1"]
+    interval: 10s
+    timeout: 5s
+    retries: 15
+    start_period: 25s
+
 services:
   postgres:
     image: imresamu/postgis:18-3.6
@@ -17,6 +43,9 @@ services:
     volumes:
       - ./seed:/docker-entrypoint-initdb.d
       - ./data:/data
+      # Lab 2.5 runs work/day2_spatial_setup.sql inside this container, the same way
+      # marimo and Flink read /work. Without this the psql -f is a file-not-found.
+      - ./work:/work
       # PG18+ images REFUSE to start if anything exists at /var/lib/postgresql/data.
       # The mount goes one level up; the server then lives in $PGDATA,
       # /var/lib/postgresql/18/docker. See docker-library/postgres#1259.
@@ -141,7 +170,10 @@ services:
   # Notebook surface for the whole week. marimo, run under uv.
   marimo:
     build: ./marimo
-    ports: ["8888:8888"]
+    # 4040 is the Spark driver UI. Labs 2.1 and 2.2 read the SQL tab and the stage
+    # task-duration histogram from it, so it has to be reachable from the host; it
+    # serves only while a SparkSession is alive in the notebook.
+    ports: ["8888:8888", "4040:4040"]
     environment:
       MINIO_ENDPOINT: http://minio:9000
       NEO4J_URI: bolt://neo4j:7687
@@ -208,45 +240,81 @@ services:
       retries: 10
       start_period: 20s
 
-  # --- Day 2 onwards ---------------------------------------------------------
-  # A SKETCH, not a working config. These services are not wired up yet: uncomment
-  # and finish them behind a `day2` profile when the Day 2 labs are written, then
-  # update CLAUDE.md and lab-0-setup.md, both of which currently say they are absent.
-  #
-  # Tags below were checked for a native linux/arm64 build (see the arm64 note in
-  # CLAUDE.md - the room is on Apple Silicon). Bitnami is deliberately NOT used here:
-  # those images were retired from Docker Hub. Kafka runs KRaft, so no ZooKeeper.
-  #
-  # kafka:
-  #   image: apache/kafka:4.3.1
-  #   profiles: ["day2"]
-  #   environment:
-  #     KAFKA_NODE_ID: 1
-  #     KAFKA_PROCESS_ROLES: broker,controller
-  #     KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-  #     KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-  #     KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-  #   ports: ["9092:9092"]
-  #
-  # schema-registry:
-  #   image: confluentinc/cp-schema-registry:8.0.7
-  #   profiles: ["day2"]
-  #   environment:
-  #     SCHEMA_REGISTRY_HOST_NAME: schema-registry
-  #     SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
-  #   ports: ["8081:8081"]     # NOTE: clashes with nothing today, but check first
-  #
-  # flink-jobmanager:
-  #   image: apache/flink:2.3.0
-  #   profiles: ["day2"]
-  #   command: jobmanager
-  #   ports: ["8082:8081"]
-  #
-  # airflow:                   # Day 3, not Day 2
-  #   image: apache/airflow:3.3.1
-  #   profiles: ["day3"]
-  #   command: standalone
-  #   ports: ["8083:8080"]
+  # --- Day 2: streaming -------------------------------------------------------
+  # These start with a plain `docker compose up -d`, on purpose: Day 2 has no setup
+  # lab, so the room must get a working stack from the one command they already know.
+  # The cost is memory - see the RAM note in Day2/lab-instructions/README.md.
+
+  # Single-node KRaft broker: no ZooKeeper to explain or babysit (deck slide 3).
+  # Two listeners: PLAINTEXT for in-network clients (Flink, other containers) and
+  # HOST for anything a learner runs from their own machine on localhost:29092.
+  # Advertising only the internal name is the classic "works in exec, hangs from the
+  # host" failure, which is why HOST is here even though every lab command uses exec.
+  kafka:
+    image: apache/kafka:4.3.1
+    ports: ["29092:29092"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,HOST://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Single broker, so every internal topic must ask for exactly one replica.
+      # The defaults are 3 and the broker refuses to create __consumer_offsets.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # Lab 2.3 adds and kills group members repeatedly. The 3 s default delay makes
+      # every rebalance look like a hang.
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes:
+      - ./data:/data
+      - kafkadata:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 20s
+
+  # Built, not pulled: the SQL client needs the Kafka connector jar on the classpath.
+  # See flink/Dockerfile for why the version pairing is not negotiable.
+  flink-jobmanager:
+    build: ./flink
+    command: jobmanager
+    ports: ["8081:8081"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        rest.address: flink-jobmanager
+        rest.bind-address: 0.0.0.0
+        execution.checkpointing.interval: 10s
+        execution.checkpointing.mode: EXACTLY_ONCE
+        state.backend.type: hashmap
+    volumes:
+      - ./work:/work
+      - ./data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/overview >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  # Two TaskManagers, two slots each (deck slide 3), as separate named services
+  # rather than `replicas: 2`, so lab 2.4 can say `docker compose kill
+  # flink-taskmanager-1` verbatim and have it mean one specific container.
+  flink-taskmanager-1:
+    <<: *flink-tm
+  flink-taskmanager-2:
+    <<: *flink-tm
 
 volumes:
   pgdata:
@@ -254,3 +322,4 @@ volumes:
   miniodata:
   neo4jdata:
   trinometastore:
+  kafkadata:
