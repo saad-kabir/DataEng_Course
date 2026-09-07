@@ -1,5 +1,5 @@
 -- Lab 2.4 - windows, lateness, recovery.
--- Run with:  docker compose exec flink-jobmanager ./bin/sql-client.sh -f /work/lab_2_4_windows.sql
+-- Run with:  docker compose exec flink-jobmanager ./bin/sql-client.sh -f /work/day2/lab_2_4_windows.sql
 
 -- Checkpoint every 10 s. The cluster default is already 10 s (see docker-compose.yml),
 -- but setting it here makes the recovery step in this lab explicit rather than implied.

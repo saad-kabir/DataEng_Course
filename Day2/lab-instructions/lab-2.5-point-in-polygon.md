@@ -1,7 +1,7 @@
 # Lab 2.5 · Point in polygon, three ways
 
 **Time** 50 minutes · **Slide 48** · **Systems** PostGIS
-**SQL** `Day1/labs/work/day2_spatial_setup.sql`
+**SQL** `Day2/labs/work/day2/day2_spatial_setup.sql`
 
 > The Day 2 deck labels this **Lab 3.1**. It is lab **2.5** here, because Day 3's own
 > labs are numbered 3.1 to 3.4 and the identifier has to mean one thing across the
@@ -88,7 +88,7 @@ docker compose exec postgres psql -U de -d rides -c \
 ### 2. Generate the pickup points (5 min)
 
 ```bash
-docker compose exec -T postgres psql -U de -d rides -f /work/day2_spatial_setup.sql
+docker compose exec -T postgres psql -U de -d rides -f /work/day2/day2_spatial_setup.sql
 ```
 
 ```

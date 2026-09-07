@@ -1,7 +1,7 @@
 # Lab 2.2 · Fix a skewed join
 
 **Time** 50 minutes · **Slide 20** · **Systems** Spark (in marimo)
-**Notebook** `Day1/labs/work/lab_2_2_skew.py`
+**Notebook** `Day2/labs/work/day2/lab_2_2_skew.py`
 
 ## Objective
 

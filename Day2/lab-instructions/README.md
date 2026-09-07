@@ -68,19 +68,26 @@ than adding a second.
 
 ```
 DataEng_Course/
-├── Day1/labs/                ← run docker compose from here
+├── Day1/labs/                ← run docker compose from here, as on Day 1
 │   ├── docker-compose.yml    nine services
 │   ├── flink/Dockerfile      Flink + the Kafka SQL connector
 │   ├── data/                 taxi Parquet, zone lookup, zone polygons, trip_events.jsonl
-│   └── work/                 → /work in the marimo and Flink containers
-│       ├── day2_common.py           shared dataset builders for labs 2.1 and 2.2
-│       ├── day2_make_events.py      builds the trip_events stream
-│       ├── lab_2_1_aqe.py           notebook, lab 2.1
-│       ├── lab_2_2_skew.py          notebook, lab 2.2
-│       ├── lab_2_4_windows.sql      Flink SQL, lab 2.4
-│       └── day2_spatial_setup.sql   point generation, lab 2.5
-└── Day2/lab-instructions/    these lab sheets
+│   └── work/                 Day 1's notebooks  → /work
+└── Day2/
+    ├── lab-instructions/     these lab sheets
+    └── labs/work/            Day 2's lab files  → /work/day2
+        ├── day2_common.py           shared dataset builders for labs 2.1 and 2.2
+        ├── day2_make_events.py      builds the trip_events stream
+        ├── lab_2_1_aqe.py           notebook, lab 2.1
+        ├── lab_2_2_skew.py          notebook, lab 2.2
+        ├── lab_2_4_windows.sql      Flink SQL, lab 2.4
+        └── day2_spatial_setup.sql   point generation, lab 2.5
 ```
+
+Day 2's lab files live under `Day2/`, but the **stack does not move** — there is one
+Compose file and it stays in `Day1/labs/`. Compose mounts `Day2/labs/work` into the
+containers at **`/work/day2`**, so in marimo you will see a `day2/` folder, and every
+container path in these sheets starts `/work/day2/`.
 
 ## The web interfaces you will need today
 
@@ -95,7 +102,7 @@ DataEng_Course/
 Day 2 reuses Day 1's **NYC TLC yellow taxi, January 2024** extract throughout. The
 taxi data has no driver and no city column, so labs 2.1 and 2.2 derive them: `city`
 is the real borough of the pickup zone, `driver_id` is a deterministic hash. See the
-docstring in `Day1/labs/work/day2_common.py`.
+docstring in `Day2/labs/work/day2/day2_common.py`.
 
 Lab 2.5 adds the **NYC TLC taxi zone shapefile** - 263 real zone polygons. The trip
 extract has carried no latitude or longitude since 2016, so lab 2.5 generates pickup

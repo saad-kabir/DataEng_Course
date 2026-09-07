@@ -17,6 +17,7 @@ x-flink-taskmanager: &flink-tm
       taskmanager.memory.process.size: 1400m
   volumes:
     - ./work:/work
+    - ../../Day2/labs/work:/work/day2
     - ./data:/data
   # A TaskManager exposes no REST endpoint, so readiness is taken from its own log:
   # the line it writes once it has registered with the JobManager and its slots are
@@ -43,9 +44,14 @@ services:
     volumes:
       - ./seed:/docker-entrypoint-initdb.d
       - ./data:/data
-      # Lab 2.5 runs work/day2_spatial_setup.sql inside this container, the same way
-      # marimo and Flink read /work. Without this the psql -f is a file-not-found.
+      # Lab 2.5 runs a SQL file inside this container, the same way marimo and Flink
+      # read /work. Without these the psql -f is a file-not-found.
       - ./work:/work
+      # Day 2's lab files live in Day2/labs/work. Mounting them at /work/day2 keeps
+      # every container's lab path a single /work tree, and makes them show up as a
+      # day2/ folder in marimo's file browser. Docker creates the empty mountpoint
+      # Day1/labs/work/day2/ on the host - it is gitignored.
+      - ../../Day2/labs/work:/work/day2
       # PG18+ images REFUSE to start if anything exists at /var/lib/postgresql/data.
       # The mount goes one level up; the server then lives in $PGDATA,
       # /var/lib/postgresql/18/docker. See docker-library/postgres#1259.
@@ -180,6 +186,11 @@ services:
       PGHOST: postgres
     volumes:
       - ./work:/work
+      # Day 2's lab files live in Day2/labs/work. Mounting them at /work/day2 keeps
+      # every container's lab path a single /work tree, and makes them show up as a
+      # day2/ folder in marimo's file browser. Docker creates the empty mountpoint
+      # Day1/labs/work/day2/ on the host - it is gitignored.
+      - ../../Day2/labs/work:/work/day2
       - ./data:/data
     working_dir: /work
     # --project /opt/app because ./work is mounted over /work (see marimo/Dockerfile).
@@ -300,6 +311,11 @@ services:
         state.backend.type: hashmap
     volumes:
       - ./work:/work
+      # Day 2's lab files live in Day2/labs/work. Mounting them at /work/day2 keeps
+      # every container's lab path a single /work tree, and makes them show up as a
+      # day2/ folder in marimo's file browser. Docker creates the empty mountpoint
+      # Day1/labs/work/day2/ on the host - it is gitignored.
+      - ../../Day2/labs/work:/work/day2
       - ./data:/data
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8081/overview >/dev/null || exit 1"]

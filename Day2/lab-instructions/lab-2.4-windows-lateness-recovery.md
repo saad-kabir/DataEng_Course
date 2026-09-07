@@ -1,7 +1,7 @@
 # Lab 2.4 · Windows, lateness, recovery
 
 **Time** 50 minutes · **Slide 40** · **Systems** Flink SQL, Kafka
-**SQL** `Day1/labs/work/lab_2_4_windows.sql`
+**SQL** `Day2/labs/work/day2/lab_2_4_windows.sql`
 
 ## Objective
 
@@ -41,7 +41,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
   --create --topic city_fares_1m --partitions 1 --replication-factor 1
 ```
 
-Read `Day1/labs/work/lab_2_4_windows.sql` before you run it. Three things in it
+Read `Day2/labs/work/day2/lab_2_4_windows.sql` before you run it. Three things in it
 matter:
 
 ```sql
@@ -69,7 +69,7 @@ regular grouped aggregate that emits updates, and the job fails to submit with
 Submit it:
 
 ```bash
-docker compose exec flink-jobmanager ./bin/sql-client.sh -f /work/lab_2_4_windows.sql
+docker compose exec flink-jobmanager ./bin/sql-client.sh -f /work/day2/lab_2_4_windows.sql
 ```
 
 ```

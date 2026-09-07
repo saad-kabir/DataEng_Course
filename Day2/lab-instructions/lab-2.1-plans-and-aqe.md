@@ -1,7 +1,7 @@
 # Lab 2.1 · Read the plan, then let AQE re-plan it
 
 **Time** 50 minutes · **Slide 12** · **Systems** Spark (in marimo)
-**Notebook** `Day1/labs/work/lab_2_1_aqe.py`
+**Notebook** `Day2/labs/work/day2/lab_2_1_aqe.py`
 
 ## Objective
 
