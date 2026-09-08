@@ -1,0 +1,27 @@
+{
+  "name": "rides-cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "tasks.max": "1",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "de",
+    "database.password": "de",
+    "database.dbname": "rides",
+    "topic.prefix": "cdc",
+    "table.include.list": "public.cdc_trips",
+    "plugin.name": "pgoutput",
+    "slot.name": "rides_cdc_slot",
+    "publication.name": "rides_cdc_pub",
+    "snapshot.mode": "initial",
+    "tombstones.on.delete": "false",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false",
+    "topic.creation.default.replication.factor": "1",
+    "topic.creation.default.partitions": "1",
+    "topic.creation.default.cleanup.policy": "compact",
+    "decimal.handling.mode": "double"
+  }
+}

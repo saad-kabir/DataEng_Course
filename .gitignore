@@ -242,9 +242,13 @@ Day1/labs/import/*.dat
 Day1/labs/data/trip_events.jsonl
 Day1/labs/data/late_event.jsonl
 
-# Docker creates this empty mountpoint when it binds Day2/labs/work over
-# /work/day2. Nothing is ever written into it on the host.
+# Docker creates these empty mountpoints when it binds DayN/labs/work over
+# /work/dayN. Nothing is ever written into them on the host.
 Day1/labs/work/day2/
+Day1/labs/work/day3/
+
+# Airflow writes bytecode next to the DAGs it parses.
+Day3/labs/work/dags/__pycache__/
 
 # marimo per-session UI state, written when a notebook is opened.
 __marimo__/
