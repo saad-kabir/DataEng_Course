@@ -3,6 +3,40 @@
 # Later days uncomment: kafka, schema-registry, flink, airflow
 name: adetc
 
+# Shared Airflow settings. Airflow keeps its metadata in the same Postgres the labs
+# use, in its own `airflow` database, and runs LocalExecutor - one machine, real
+# parallelism, no Celery or Redis to operate (deck slide 3).
+x-airflow-env: &airflow-env
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://de:de@postgres/airflow
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+  AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+  # Every learner is an admin and there is no login screen. The course runs no
+  # credentials anywhere, and a generated password in a container file is friction
+  # with no teaching value.
+  AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
+  AIRFLOW__API__EXPOSE_CONFIG: "true"
+  # Lab 3.1 re-runs single intervals repeatedly; a short parse interval keeps the UI
+  # honest when learners edit the DAG mid-lab.
+  AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "15"
+  # Defines the Airflow Connection `rides_pg` without anyone having to click through
+  # the UI. AIRFLOW_CONN_<ID> is the documented env-var form of a connection.
+  AIRFLOW_CONN_RIDES_PG: postgresql://de:de@postgres:5432/rides
+  # Airflow 3 tasks call back to the API server over HTTP instead of touching the
+  # metadata DB directly. The default is http://localhost:8080/execution/, which is
+  # wrong the moment the scheduler and the API server are different containers -
+  # every task then dies with "httpx.ConnectError: Connection refused" while the
+  # DAG itself parses perfectly.
+  AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+  # The scheduler signs a JWT that the API server has to verify. Each container
+  # generates its own secret unless told otherwise, so without a SHARED value every
+  # task fails with "ServerResponseError: Invalid auth token" - after the DAG has
+  # parsed, been scheduled and been queued, which makes it look like a DAG bug.
+  # A fixed literal is fine here: nothing in this course is exposed off the laptop.
+  AIRFLOW__API_AUTH__JWT_SECRET: adetc-day3-lab-secret
+  AIRFLOW__CORE__FERNET_KEY: dGhpc19pc19hX2R1bW15X2Zlcm5ldF9rZXlfMzJieXRlcw=
+  PGPASSWORD: de
+
 # Shared definition for the two Flink TaskManagers (see flink-taskmanager-1/-2).
 x-flink-taskmanager: &flink-tm
   build: ./flink
@@ -33,9 +67,12 @@ x-flink-taskmanager: &flink-tm
 services:
   postgres:
     image: imresamu/postgis:18-3.6
+    # wal_level=logical, not replica: Day 3's Debezium connector decodes the WAL
+    # logically and refuses to start otherwise. logical is a superset of replica, so
+    # lab 1.1's physical streaming replication is unaffected.
     command: >
-      postgres -c wal_level=replica -c max_wal_senders=4
-               -c max_replication_slots=4 -c hot_standby=on
+      postgres -c wal_level=logical -c max_wal_senders=8
+               -c max_replication_slots=8 -c hot_standby=on
     environment:
       POSTGRES_USER: de
       POSTGRES_PASSWORD: de
@@ -52,6 +89,7 @@ services:
       # day2/ folder in marimo's file browser. Docker creates the empty mountpoint
       # Day1/labs/work/day2/ on the host - it is gitignored.
       - ../../Day2/labs/work:/work/day2
+      - ../../Day3/labs/work:/work/day3
       # PG18+ images REFUSE to start if anything exists at /var/lib/postgresql/data.
       # The mount goes one level up; the server then lives in $PGDATA,
       # /var/lib/postgresql/18/docker. See docker-library/postgres#1259.
@@ -148,6 +186,8 @@ services:
       # named volume mounted there inherits that ownership. The catalog dir is the
       # `metastore` subdirectory (see trino/catalog/hive.properties).
       - trinometastore:/data/trino
+      # Labs 3.3 and 3.4 run SQL files from here with `trino -f`.
+      - ../../Day3/labs/work:/work/day3
     healthcheck:
       test: ["CMD", "/usr/lib/trino/bin/health-check"]
       interval: 10s
@@ -251,6 +291,144 @@ services:
       retries: 10
       start_period: 20s
 
+  # Runs once, then exits 0: creates the `airflow` database if it is missing and
+  # applies the metadata schema. `Exited (0)` is its correct state.
+  airflow-init:
+    image: apache/airflow:3.3.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *airflow-env
+    volumes:
+      - ../../Day3/labs/work:/opt/airflow/day3
+      - ../../Day3/labs/work/dags:/opt/airflow/dags
+    entrypoint: ["bash", "/opt/airflow/day3/airflow_init.sh"]
+    restart: "no"
+
+  airflow-apiserver:
+    image: apache/airflow:3.3.1
+    command: api-server
+    ports: ["8079:8080"]
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-env
+    volumes:
+      - ../../Day3/labs/work:/opt/airflow/day3
+      - ../../Day3/labs/work/dags:/opt/airflow/dags
+      - airflowlogs:/opt/airflow/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/v2/version >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # Airflow 3 runs the DAG processor out of process, so it is its own service rather
+  # than a thread inside the scheduler as it was on 2.x.
+  airflow-scheduler:
+    image: apache/airflow:3.3.1
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-env
+    volumes:
+      - ../../Day3/labs/work:/opt/airflow/day3
+      - ../../Day3/labs/work/dags:/opt/airflow/dags
+      - airflowlogs:/opt/airflow/logs
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$$(hostname)\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 40s
+
+  airflow-dag-processor:
+    image: apache/airflow:3.3.1
+    command: dag-processor
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-env
+    volumes:
+      - ../../Day3/labs/work:/opt/airflow/day3
+      - ../../Day3/labs/work/dags:/opt/airflow/dags
+      - airflowlogs:/opt/airflow/logs
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type DagProcessorJob --hostname \"$$(hostname)\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 40s
+
+  # --- Day 3: pipelines and the lakehouse ------------------------------------
+  # Also started by a plain `docker compose up -d`. Day 3 does not use Flink or
+  # Neo4j, and the Day 3 README tells the room to stop them to get the memory back.
+
+  # Holds Iceberg table pointers; MinIO holds the data and metadata files. The
+  # "fixture" image is the Iceberg project's own REST catalog, backed here by a
+  # SQLite file on a named volume so table pointers survive a restart.
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:1.10.1
+    ports: ["8181:8181"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      CATALOG_WAREHOUSE: s3://rides-lake/iceberg
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      # /home/iceberg is the one directory the image's non-root user (uid 1000)
+      # already owns, so a named volume mounted there inherits that ownership.
+      # Pointing this at a fresh /catalog mount instead gives SQLITE_CANTOPEN.
+      CATALOG_URI: jdbc:sqlite:file:/home/iceberg/catalog.db
+      CATALOG_JDBC_SCHEMA__VERSION: V1
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: us-east-1
+    volumes:
+      - icebergcatalog:/home/iceberg
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8181/v1/config?warehouse=s3://rides-lake/iceberg >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  # Debezium's Connect distribution: the Postgres connector is already on the
+  # classpath, so lab 3.2 only has to POST a connector configuration.
+  # Pulled from quay.io because Debezium's Docker Hub mirror stopped at 3.0.
+  kafka-connect:
+    image: quay.io/debezium/connect:3.6.2.Final
+    ports: ["8083:8083"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: connect-day3
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      STATUS_STORAGE_TOPIC: connect_statuses
+      # Single broker, so Connect's own internal topics must ask for one replica.
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8083/connectors >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
   # --- Day 2: streaming -------------------------------------------------------
   # These start with a plain `docker compose up -d`, on purpose: Day 2 has no setup
   # lab, so the room must get a working stack from the one command they already know.
@@ -339,3 +517,5 @@ volumes:
   neo4jdata:
   trinometastore:
   kafkadata:
+  icebergcatalog:
+  airflowlogs:
